@@ -2265,6 +2265,7 @@ async function pushToCloud(){
       totalCorrect: progress.totalCorrect || 0,
       wordsLearned: words.filter(w=>(w.srLevel||0)>=3).length,
       wordCount: words.length,
+      grammarMistakes,
       updatedAt: Date.now()
     }, { merge:true }); // merge so we never clobber the owner-assigned `groups` field
     setSyncStatus('saved');
@@ -2288,6 +2289,7 @@ async function pullFromCloud(){
       if(Array.isArray(d.hidden)) { hiddenIds = new Set(d.hidden); localStorage.setItem(LS_HIDDEN, JSON.stringify(d.hidden)); }
       if(d.srState && typeof d.srState==='object') { srState = d.srState; localStorage.setItem(LS_SRSTATE, JSON.stringify(srState)); }
       // group membership is assigned by the owner; the client only reads it
+      if(d.grammarMistakes && typeof d.grammarMistakes==='object'){ grammarMistakes = d.grammarMistakes; localStorage.setItem(LS_GMISTAKES, JSON.stringify(grammarMistakes)); }
       myGroups = (Array.isArray(d.groups) && d.groups.length) ? d.groups : [DEFAULT_GROUP];
       saveMyGroups();
       rebuildWords();
@@ -3329,7 +3331,7 @@ function showTab(name, opts){
   opts = opts || {};
   currentTab = name;
   const el = document.getElementById('tab-'+name);
-  ['home','vocab','practice','games','more','stats','settings'].forEach(t=>{
+  ['home','vocab','practice','games','more','stats','settings','manage'].forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('hidden', t!==name);
   });
   document.querySelectorAll('nav.tabbar button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
@@ -4339,7 +4341,7 @@ function grammarPickerHTML(){
   const totalRows = grammarTables.reduce((n,t)=>n+(t.rows||[]).length, 0);
   return `
     <p style="font-size:12px;color:var(--ivory-dim);margin:-4px 0 12px;">בחרו טבלה לתרגול, או תרגלו את כולן יחד.</p>
-    <button class="continue-hero as-button" onclick="practiceAllGrammar()">
+    <button class="continue-hero as-button" onclick="grammarSetup('__all__')">
       <div class="continue-text">
         <div class="continue-title">תרגל את כל הטבלאות</div>
         <div class="continue-sub">${totalRows} מילים מ-${grammarTables.length} טבלאות</div>
@@ -4348,12 +4350,12 @@ function grammarPickerHTML(){
     </button>
     <div class="pick-grid">
       ${grammarTables.map(t=>`
-        <button class="pick-card as-button" onclick="practiceGrammar('${t.id}')">
+        <button class="pick-card as-button" onclick="grammarSetup('${t.id}')">
           <div class="pick-title">${escapeHtml(t.title || 'ללא כותרת')}</div>
-          <div class="pick-sub">${(t.rows||[]).length} מילים</div>
+          <div class="pick-sub">${(t.rows||[]).length} מילים${grammarMistakeCount(t.id) ? ` · ${grammarMistakeCount(t.id)} טעויות` : ''}</div>
         </button>`).join('')}
     </div>
-    <button class="btn btn-outline btn-block" style="margin-top:14px;" onclick="openGrammarManager()">⚙️ ניהול טבלאות דקדוק</button>`;
+`;
 }
 
 function textsPickerHTML(){
@@ -4372,12 +4374,104 @@ function textsPickerHTML(){
           <div class="pick-sub">${(t.questions||[]).length} שאלות</div>
         </button>`).join('')}
     </div>
-    ${isOwner() ? `<button class="btn btn-outline btn-block" style="margin-top:14px;" onclick="openTextsManager()">⚙️ ניהול טקסטים</button>` : ''}`;
+`;
 }
 
 // Practising "everything" builds one combined table on the fly, so the existing quiz
 // engine can run over it without knowing the difference.
 let combinedGrammarTable = null;
+
+/* Grammar practice now mirrors the flashcards flow: pick how many, rotate through the
+   table before repeating, and collect the ones you got wrong into their own set. */
+const LS_GMISTAKES = 'arabicApp_grammarMistakes_v1';
+let grammarMistakes = loadGrammarMistakes();
+function loadGrammarMistakes(){
+  try{ return JSON.parse(localStorage.getItem(LS_GMISTAKES)) || {}; }catch(e){ return {}; }
+}
+function saveGrammarMistakes(){
+  localStorage.setItem(LS_GMISTAKES, JSON.stringify(grammarMistakes));
+  scheduleCloudSave();
+}
+// a grammar row has no id of its own, so identify it by its content
+function gRowKey(r){ return [r.word, r.root, r.form, r.pronoun].join('|'); }
+function grammarMistakeCount(tableId){
+  return (grammarMistakes[tableId] || []).length;
+}
+function tableById(id){
+  return id==='__all__' ? combinedGrammarTable : grammarTables.find(t=>t.id===id);
+}
+
+function grammarSetup(id){
+  if(id === '__all__'){
+    const allRows = grammarTables.flatMap(t=>t.rows||[]);
+    if(allRows.length === 0){ alert('אין מילים לתרגול'); return; }
+    combinedGrammarTable = { id:'__all__', title:'כל הטבלאות', rows:allRows };
+  }
+  const t = tableById(id);
+  if(!t) return;
+  const total = (t.rows||[]).length;
+  const mistakes = grammarMistakeCount(id);
+  const seen = new Set(rotation['gram_'+id] || []);
+  const fresh = (t.rows||[]).filter(r=>!seen.has(gRowKey(r))).length;
+
+  const wrap = document.getElementById('practiceArea');
+  wrap.innerHTML = `
+    ${practiceSubTabs()}
+    <div class="card">
+      <h3>${escapeHtml(t.title || 'תרגול דקדוק')}</h3>
+      <p style="font-size:12px;color:var(--ivory-dim);margin-top:-4px;">
+        ${total} מילים בטבלה${fresh < total ? ` · ${fresh} שעדיין לא תורגלו בסבב הזה` : ''}
+      </p>
+      ${mistakes ? `
+        <button class="btn btn-teal btn-block" style="margin-bottom:12px;" onclick="startGrammarQuiz('${id}', 0, true)">
+          🔁 תרגל רק את ${mistakes} הטעויות שלי
+        </button>` : ''}
+      <div class="field"><label>כמה מילים לתרגל</label>
+        <input type="number" id="gQuizN" value="${Math.min(10, total)}" min="1" max="${total}">
+      </div>
+      <button class="btn btn-primary btn-block" onclick="startGrammarQuiz('${id}', parseInt(document.getElementById('gQuizN').value)||10, false)">התחל תרגול</button>
+      <button class="btn btn-outline btn-block" style="margin-top:8px;" onclick="renderPracticeIntro()">חזרה</button>
+    </div>`;
+}
+
+// same rotation idea as the games: work through the table before showing anything twice
+function pickFreshRows(tableId, rows, n){
+  const key = 'gram_' + tableId;
+  n = Math.min(n, rows.length);
+  let used = new Set(rotation[key] || []);
+  let unseen = rows.filter(r=>!used.has(gRowKey(r)));
+  if(unseen.length < n){
+    const carry = unseen.map(gRowKey);
+    used = new Set(carry);
+    unseen = rows.filter(r=>!used.has(gRowKey(r)));
+    shuffle(unseen);
+    unseen = [...rows.filter(r=>carry.includes(gRowKey(r))), ...unseen];
+    rotation[key] = carry;
+  } else {
+    shuffle(unseen);
+  }
+  const chosen = unseen.slice(0, n);
+  rotation[key] = [...(rotation[key] || []), ...chosen.map(gRowKey)];
+  saveRotation();
+  return chosen;
+}
+
+function startGrammarQuiz(id, n, mistakesOnly){
+  const t = tableById(id);
+  if(!t) return;
+  let rows;
+  if(mistakesOnly){
+    const keys = new Set(grammarMistakes[id] || []);
+    rows = (t.rows||[]).filter(r=>keys.has(gRowKey(r)));
+    shuffle(rows);
+  } else {
+    rows = pickFreshRows(id, t.rows||[], n || 10);
+  }
+  if(rows.length === 0){ alert('אין מילים לתרגול'); return; }
+  practiceGrammar(id, rows, mistakesOnly);
+}
+
+function practiceAllGrammar(){ grammarSetup('__all__'); }
 // A quiz can be launched from the practice picker or from the management list; going
 // "back" must land wherever it started, not always in management.
 function exitGrammarQuiz(){
@@ -4599,20 +4693,34 @@ function deleteGrammar(id){
   grammarTables = grammarTables.filter(t=>t.id!==id);
   saveGrammar(); renderGrammarUI();
 }
-function practiceGrammar(id){
+function practiceGrammar(id, chosenRows, mistakesOnly){
   grammarQuizActive = true;
   updateFloatingNav();
-  const t = (id==='__all__' ? combinedGrammarTable : grammarTables.find(x=>x.id===id));
+  const t = tableById(id);
   if(!t) return;
   let idx=0, correct=0;
-  const rows = t.rows.slice(); shuffle(rows);
+  // called with a specific set from the setup screen, or bare from the management list
+  const rows = chosenRows ? chosenRows.slice() : (function(){ const a=t.rows.slice(); shuffle(a); return a; })();
+  const wrongThisRound = [];
   // the quiz can run from the practice picker or from the management list, so render into
   // whichever container is actually on screen
   const hostId = (currentTab === 'practice') ? 'practiceArea' : 'grammarList';
   function render(){
     const wrap = document.getElementById(hostId) || document.getElementById('grammarList');
     if(idx>=rows.length){
-      wrap.innerHTML = `<div class="card" style="text-align:center;"><h3>סיימת! ${correct}/${rows.length} נכון</h3><button class="btn btn-primary" onclick="exitGrammarQuiz()">חזרה</button></div>`;
+      if(wrongThisRound.length){
+        const prev = new Set(grammarMistakes[id] || []);
+        wrongThisRound.forEach(k=>prev.add(k));
+        grammarMistakes[id] = [...prev];
+        saveGrammarMistakes();
+      }
+      const left = grammarMistakeCount(id);
+      wrap.innerHTML = `<div class="card" style="text-align:center;">
+        <h3>סיימת! ${correct}/${rows.length} נכון</h3>
+        ${left ? `<p style="font-size:12px;color:var(--ivory-dim);">${left} מילים ממתינות בתרגול הטעויות</p>
+          <button class="btn btn-teal btn-block" style="margin-top:8px;" onclick="startGrammarQuiz('${id}', 0, true)">🔁 תרגל את הטעויות</button>` : ''}
+        <button class="btn btn-primary btn-block" style="margin-top:8px;" onclick="exitGrammarQuiz()">חזרה</button>
+      </div>`;
       celebrateScore(correct, rows.length);
       return;
     }
@@ -4649,11 +4757,17 @@ function practiceGrammar(id){
 
     const fb = document.getElementById('gFeedback');
     if(mandatoryOk){
+      // answered right - if this was in the mistake set, it has been fixed
+      if(mistakesOnly || (grammarMistakes[id]||[]).includes(gRowKey(r))){
+        grammarMistakes[id] = (grammarMistakes[id]||[]).filter(k=>k!==gRowKey(r));
+        saveGrammarMistakes();
+      }
       correct++;
       if(bonusHit) awardXP(2);
       fb.innerHTML = `<span style="color:var(--teal);">✅ נכון!${bonusHit?' 🎁 בונוס תרגום!':''}</span>`;
       centerFlash(bonusHit ? '✓ נכון + בונוס!' : '✓ נכון!', 'good');
     } else {
+      if(!wrongThisRound.includes(gRowKey(r))) wrongThisRound.push(gRowKey(r));
       fb.innerHTML = `<span style="color:var(--rose);">❌ שורש: <span class="arabic">${escapeHtml(r.root)}</span>${r.binyan?` · בניין: ${escapeHtml(r.binyan)}`:''} · צורה: ${escapeHtml(r.form)} · כינוי: ${escapeHtml(r.pronoun)}</span>`;
       centerFlash('✗ '+r.form, 'bad');
     }
