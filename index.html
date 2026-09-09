@@ -966,6 +966,12 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
 /* "More" as a card grid rather than a stack of rows: four destinations read faster
    side by side, and each one can carry a live number of its own. */
 .more-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:4px;}
+/* practice pickers: choose a table / text to study */
+.pick-grid{display:grid; grid-template-columns:1fr 1fr; gap:9px;}
+.pick-card{background:var(--surface); border:1px solid var(--line); border-radius:13px; padding:14px 11px; text-align:start; cursor:pointer; transition:border-color .15s, background .15s;}
+.pick-card:active{border-color:var(--gold); background:color-mix(in srgb, var(--gold) 10%, var(--surface));}
+.pick-title{font-size:13px; font-weight:700; color:var(--ivory); line-height:1.3;}
+.pick-sub{font-size:11px; color:var(--ivory-dim); margin-top:4px;}
 .more-card{position:relative; overflow:hidden; text-align:center; padding:18px 12px 14px;
   background:var(--surface); border:1px solid var(--line); border-radius:16px; cursor:pointer;
   min-height:132px; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -1357,6 +1363,18 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
         <div class="more-card-sub">הוספה, עריכה, ייבוא</div>
         <div class="more-card-stat" id="moreStatWords"></div>
       </button>
+      <button class="more-card as-button" data-accent="grammar" onclick="openGrammarManager()">
+        <span class="more-card-emoji">📝</span>
+        <div class="more-card-title">דקדוק</div>
+        <div class="more-card-sub">ייבוא והוספת טבלאות</div>
+        <div class="more-card-stat" id="moreStatGrammar"></div>
+      </button>
+      <button class="more-card as-button" data-accent="texts" onclick="openTextsManager()">
+        <span class="more-card-emoji">📚</span>
+        <div class="more-card-title">טקסטים</div>
+        <div class="more-card-sub">הוספה ועריכת טקסטים</div>
+        <div class="more-card-stat" id="moreStatTexts"></div>
+      </button>
       <button class="more-card as-button" data-accent="data" onclick="showTab('stats')">
         <span class="more-card-emoji">📊</span>
         <div class="more-card-title">נתונים</div>
@@ -1376,6 +1394,10 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
         <div class="more-card-stat" id="moreStatFeedback"></div>
       </button>
     </div>
+  </section>
+
+  <section id="tab-manage" class="hidden">
+    <div id="manageArea"></div>
   </section>
 
   <section id="tab-stats" class="hidden">
@@ -3315,6 +3337,7 @@ function showTab(name, opts){
   renderStreakBanner();
   if(name==='home') renderHome();
   if(name==='vocab') renderWordList();
+  if(name==='manage') renderManageScreen();
   if(name==='more') renderMoreScreen();
   if(name==='games' && !opts.skipGamesRender) renderGamesMenu();
   if(name==='practice' && !practiceSession) renderPracticeIntro();
@@ -3335,7 +3358,8 @@ function practiceAreaIsDeep(){
   if(grammarQuizActive) return true;
   return !el.querySelector('.sub-tabs') && !el.querySelector('.empty-state');
 }
-const TAB_LABELS = { home:'בית', vocab:'מילים', practice:'תרגול', games:'משחקים', more:'עוד', stats:'נתונים', settings:'הגדרות' };
+const TAB_LABELS = { home:'בית', vocab:'מילים', practice:'תרגול', games:'משחקים', more:'עוד', stats:'נתונים', settings:'הגדרות', manage:'ניהול' };
+function manageTitle(){ return manageMode === 'texts' ? 'ניהול טקסטים' : 'ניהול דקדוק'; }
 const GAME_ID_LABELS = {
   mcq:'אמריקאי', memory:'משחק זיכרון', match:'חיבורים', race:'מרוץ נגד הזמן',
   crossword:'תשבץ', wordsearch:'תפזורת', wordle:'ניחוש המילה', duel:'דו־קרב יומי',
@@ -3351,6 +3375,7 @@ function currentScreenTitle(){
   // the header names the section, not the sub-tab - switching between the tabs inside it
   // should not make the page look like a different screen
   if(currentTab==='practice') return 'תרגול';
+  if(currentTab==='manage') return manageTitle();
   if(currentTab==='games' && gamesAreaIsDeep() && activeGameId){
     if(activeGameId==='boss' && typeof bossSession!=='undefined' && bossSession) return 'בוס: '+(bossSession.catId||'');
     return GAME_ID_LABELS[activeGameId] || TAB_LABELS.games;
@@ -4230,6 +4255,26 @@ function deleteWord(id){
 /* ---------- Practice mode ---------- */
 let practiceSession = null;
 
+/* ---------- Management screens (in "More"), separate from practice ---------- */
+// Everything that is about *adding* content lives here. The practice tab is only for
+// choosing what to study, so it behaves like every other game: tap it and you're in.
+let manageMode = 'grammar';
+
+function openGrammarManager(){ manageMode = 'grammar'; showTab('manage'); }
+function openTextsManager(){ manageMode = 'texts'; showTab('manage'); }
+
+function renderManageScreen(){
+  const wrap = document.getElementById('manageArea');
+  if(!wrap) return;
+  if(manageMode === 'texts'){
+    wrap.innerHTML = '<div id="textsHost"></div>';
+    renderTextsInto('textsHost');
+    return;
+  }
+  wrap.innerHTML = grammarBodyHTML();
+  renderGrammarUI();
+}
+
 let practiceMode = 'practice';
 function setPracticeMode(m){
   if(m === 'texts' && !featureOpen('texts')){
@@ -4259,13 +4304,14 @@ function renderPracticeIntro(){
     return;
   }
   if(practiceMode === 'texts'){
-    wrap.innerHTML = practiceSubTabs() + '<div id="textsHost"></div>';
-    renderTextsInto('textsHost');
+    wrap.innerHTML = practiceSubTabs() + textsPickerHTML();
     return;
   }
-  const explain = practiceMode==='practice'
-    ? 'לכל מילה 3 תשובות אפשריות (נכון / לא יודע / טעיתי) - עוזר לאפליקציה לדעת בדיוק מתי להראות לך אותה שוב.'
-    : 'טבלאות נטייה לבניינים - הוסיפו שורש, גוף וצורה, ותרגלו את הנטייה הנכונה.';
+  if(practiceMode === 'grammar'){
+    wrap.innerHTML = practiceSubTabs() + grammarPickerHTML();
+    return;
+  }
+  const explain = 'לכל מילה 3 תשובות אפשריות (נכון / לא יודע / טעיתי) - עוזר לאפליקציה לדעת בדיוק מתי להראות לך אותה שוב.';
   const dueNow = dueWords().length;
   const continueHTML = (practiceMode==='practice' && dueNow>0) ? `
     <button class="continue-hero as-button" onclick="startDueReview()">
@@ -4279,9 +4325,71 @@ function renderPracticeIntro(){
     ${practiceSubTabs()}
     ${continueHTML}
     <p style="font-size:12px;color:var(--ivory-dim);margin:-4px 0 14px;">${explain}</p>
-    ${practiceMode==='practice' ? `<div class="card">${practiceSetupBodyHTML()}</div>` : grammarBodyHTML()}
+    <div class="card">${practiceSetupBodyHTML()}</div>
   `;
-  if(practiceMode==='grammar') renderGrammarUI();
+}
+
+/* Pickers: choose what to practise. Adding content happens in "More", not here. */
+function grammarPickerHTML(){
+  if(grammarTables.length === 0){
+    return `<div class="empty-state"><span class="emoji">📝</span>אין עדיין טבלאות דקדוק.<br>
+      אפשר להוסיף אותן ב"עוד" ← "דקדוק".
+      <button class="btn btn-outline btn-block" style="margin-top:14px;max-width:260px;" onclick="openGrammarManager()">פתח ניהול דקדוק</button></div>`;
+  }
+  const totalRows = grammarTables.reduce((n,t)=>n+(t.rows||[]).length, 0);
+  return `
+    <p style="font-size:12px;color:var(--ivory-dim);margin:-4px 0 12px;">בחרו טבלה לתרגול, או תרגלו את כולן יחד.</p>
+    <button class="continue-hero as-button" onclick="practiceAllGrammar()">
+      <div class="continue-text">
+        <div class="continue-title">תרגל את כל הטבלאות</div>
+        <div class="continue-sub">${totalRows} מילים מ-${grammarTables.length} טבלאות</div>
+      </div>
+      <span class="continue-btn">▶ התחל</span>
+    </button>
+    <div class="pick-grid">
+      ${grammarTables.map(t=>`
+        <button class="pick-card as-button" onclick="practiceGrammar('${t.id}')">
+          <div class="pick-title">${escapeHtml(t.title || 'ללא כותרת')}</div>
+          <div class="pick-sub">${(t.rows||[]).length} מילים</div>
+        </button>`).join('')}
+    </div>
+    <button class="btn btn-outline btn-block" style="margin-top:14px;" onclick="openGrammarManager()">⚙️ ניהול טבלאות דקדוק</button>`;
+}
+
+function textsPickerHTML(){
+  const list = visibleTexts();
+  if(list.length === 0){
+    return `<div class="empty-state"><span class="emoji">📚</span>אין עדיין טקסטים.
+      ${isOwner() ? `<br>אפשר להוסיף אותם ב"עוד" ← "טקסטים".
+      <button class="btn btn-outline btn-block" style="margin-top:14px;max-width:260px;" onclick="openTextsManager()">פתח ניהול טקסטים</button>` : ''}</div>`;
+  }
+  return `
+    <p style="font-size:12px;color:var(--ivory-dim);margin:-4px 0 12px;">בחרו טקסט לקריאה ותרגול.</p>
+    <div class="pick-grid">
+      ${list.map(t=>`
+        <button class="pick-card as-button" onclick="openReader('${t.id}')">
+          <div class="pick-title">${escapeHtml(t.title || 'ללא כותרת')}</div>
+          <div class="pick-sub">${(t.questions||[]).length} שאלות</div>
+        </button>`).join('')}
+    </div>
+    ${isOwner() ? `<button class="btn btn-outline btn-block" style="margin-top:14px;" onclick="openTextsManager()">⚙️ ניהול טקסטים</button>` : ''}`;
+}
+
+// Practising "everything" builds one combined table on the fly, so the existing quiz
+// engine can run over it without knowing the difference.
+let combinedGrammarTable = null;
+// A quiz can be launched from the practice picker or from the management list; going
+// "back" must land wherever it started, not always in management.
+function exitGrammarQuiz(){
+  if(currentTab === 'practice'){ renderPracticeIntro(); }
+  else { renderGrammarUI(); }
+}
+function practiceAllGrammar(){
+  const allRows = grammarTables.flatMap(t=>t.rows||[]);
+  if(allRows.length === 0){ alert('אין מילים לתרגול'); return; }
+  // held outside grammarTables so it is never saved, synced or listed as a real table
+  combinedGrammarTable = { id:'__all__', title:'כל הטבלאות', rows:allRows };
+  practiceGrammar('__all__');
 }
 function practiceSetupBodyHTML(){
   return `
@@ -4494,13 +4602,17 @@ function deleteGrammar(id){
 function practiceGrammar(id){
   grammarQuizActive = true;
   updateFloatingNav();
-  const t = grammarTables.find(x=>x.id===id); if(!t) return;
+  const t = (id==='__all__' ? combinedGrammarTable : grammarTables.find(x=>x.id===id));
+  if(!t) return;
   let idx=0, correct=0;
   const rows = t.rows.slice(); shuffle(rows);
+  // the quiz can run from the practice picker or from the management list, so render into
+  // whichever container is actually on screen
+  const hostId = (currentTab === 'practice') ? 'practiceArea' : 'grammarList';
   function render(){
-    const wrap = document.getElementById('grammarList');
+    const wrap = document.getElementById(hostId) || document.getElementById('grammarList');
     if(idx>=rows.length){
-      wrap.innerHTML = `<div class="card" style="text-align:center;"><h3>סיימת! ${correct}/${rows.length} נכון</h3><button class="btn btn-primary" onclick="renderGrammarUI()">חזרה</button></div>`;
+      wrap.innerHTML = `<div class="card" style="text-align:center;"><h3>סיימת! ${correct}/${rows.length} נכון</h3><button class="btn btn-primary" onclick="exitGrammarQuiz()">חזרה</button></div>`;
       celebrateScore(correct, rows.length);
       return;
     }
@@ -7711,6 +7823,12 @@ function renderMoreScreen(){
   const set = (id, txt) => { const el = document.getElementById(id); if(el) el.textContent = txt || ''; };
 
   set('moreStatWords', words.length>0 ? `${words.length} מילים` : 'עדיין ריק');
+
+  const gRows = grammarTables.reduce((n,t)=>n+(t.rows||[]).length, 0);
+  set('moreStatGrammar', grammarTables.length>0 ? `${grammarTables.length} טבלאות · ${gRows} מילים` : 'עדיין ריק');
+
+  const tList = visibleTexts();
+  set('moreStatTexts', tList.length>0 ? `${tList.length} טקסטים` : 'עדיין ריק');
 
   const week = last7Days();
   const c = week.reduce((a,d)=>a+d.correct,0), w = week.reduce((a,d)=>a+d.wrong,0);
