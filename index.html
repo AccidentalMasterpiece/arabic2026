@@ -972,6 +972,13 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
 .pick-card:active{border-color:var(--gold); background:color-mix(in srgb, var(--gold) 10%, var(--surface));}
 .pick-title{font-size:13px; font-weight:700; color:var(--ivory); line-height:1.3;}
 .pick-sub{font-size:11px; color:var(--ivory-dim); margin-top:4px;}
+/* collapsible grammar tables in the management screen */
+.gcard{padding:12px;}
+.gcard-head{display:flex; align-items:center; gap:10px; width:100%; text-align:start; cursor:pointer;}
+.gcard-title{font-size:14px; font-weight:700; color:var(--ivory); line-height:1.3;}
+.gcard-sub{font-size:11px; color:var(--ivory-dim); margin-top:3px;}
+.gcard-arrow{font-size:14px; color:var(--ivory-dim); flex:none; transition:transform .2s;}
+.gcard-arrow.open{transform:rotate(180deg); color:var(--gold);}
 .more-card{position:relative; overflow:hidden; text-align:center; padding:18px 12px 14px;
   background:var(--surface); border:1px solid var(--line); border-radius:16px; cursor:pointer;
   min-height:132px; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -4334,9 +4341,7 @@ function renderPracticeIntro(){
 /* Pickers: choose what to practise. Adding content happens in "More", not here. */
 function grammarPickerHTML(){
   if(grammarTables.length === 0){
-    return `<div class="empty-state"><span class="emoji">📝</span>אין עדיין טבלאות דקדוק.<br>
-      אפשר להוסיף אותן ב"עוד" ← "דקדוק".
-      <button class="btn btn-outline btn-block" style="margin-top:14px;max-width:260px;" onclick="openGrammarManager()">פתח ניהול דקדוק</button></div>`;
+    return `<div class="empty-state"><span class="emoji">📝</span>אין עדיין טבלאות דקדוק.<br>אפשר להוסיף אותן ב"עוד" ← "דקדוק".</div>`;
   }
   const totalRows = grammarTables.reduce((n,t)=>n+(t.rows||[]).length, 0);
   return `
@@ -4361,9 +4366,7 @@ function grammarPickerHTML(){
 function textsPickerHTML(){
   const list = visibleTexts();
   if(list.length === 0){
-    return `<div class="empty-state"><span class="emoji">📚</span>אין עדיין טקסטים.
-      ${isOwner() ? `<br>אפשר להוסיף אותם ב"עוד" ← "טקסטים".
-      <button class="btn btn-outline btn-block" style="margin-top:14px;max-width:260px;" onclick="openTextsManager()">פתח ניהול טקסטים</button>` : ''}</div>`;
+    return `<div class="empty-state"><span class="emoji">📚</span>אין עדיין טקסטים.${isOwner() ? `<br>אפשר להוסיף אותם ב"עוד" ← "טקסטים".` : ''}</div>`;
   }
   return `
     <p style="font-size:12px;color:var(--ivory-dim);margin:-4px 0 12px;">בחרו טקסט לקריאה ותרגול.</p>
@@ -4426,9 +4429,7 @@ function grammarSetup(id){
         <button class="btn btn-teal btn-block" style="margin-bottom:12px;" onclick="startGrammarQuiz('${id}', 0, true)">
           🔁 תרגל רק את ${mistakes} הטעויות שלי
         </button>` : ''}
-      <div class="field"><label>כמה מילים לתרגל</label>
-        <input type="number" id="gQuizN" value="${Math.min(10, total)}" min="1" max="${total}">
-      </div>
+      ${countSlider('gQuizN', Math.min(10, total), 1, total)}
       <button class="btn btn-primary btn-block" onclick="startGrammarQuiz('${id}', parseInt(document.getElementById('gQuizN').value)||10, false)">התחל תרגול</button>
       <button class="btn btn-outline btn-block" style="margin-top:8px;" onclick="renderPracticeIntro()">חזרה</button>
     </div>`;
@@ -4667,6 +4668,7 @@ function saveGrammarTable(){
   renderGrammarUI();
 }
 let grammarQuizActive = false;
+let expandedGrammar = new Set();
 function renderGrammarUI(){
   grammarQuizActive = false;
   updateFloatingNav();
@@ -4676,17 +4678,47 @@ function renderGrammarUI(){
     wrap.innerHTML = `<div class="empty-state"><span class="emoji">📝</span>עדיין אין טבלאות דקדוק. הוסיפו למעלה, או ייבאו קובץ וורד.</div>`;
     return;
   }
-  wrap.innerHTML = grammarTables.map(t=>`
-    <div class="card">
-      <h3>${escapeHtml(t.title)}</h3>
-      ${(()=>{ const hasB = t.rows.some(r=>r.binyan); return `<table class="gtable"><thead><tr><th>מילה</th><th>שורש</th>${hasB?'<th>בניין</th>':''}<th>צורה/זמן</th><th>כינוי</th></tr></thead>
-      <tbody>${t.rows.map(r=>`<tr><td class="arabic">${escapeHtml(r.word)}</td><td class="arabic">${escapeHtml(r.root)}</td>${hasB?`<td>${escapeHtml(r.binyan||'')}</td>`:''}<td>${escapeHtml(r.form)}</td><td>${escapeHtml(r.pronoun)}</td></tr>`).join('')}</tbody></table>`; })()}
-      <div class="btn-row" style="margin-top:10px;">
-        <button class="btn btn-teal" onclick="practiceGrammar('${t.id}')">תרגל טבלה זו</button>
-        <button class="btn btn-danger" onclick="deleteGrammar('${t.id}')">מחק</button>
-      </div>
-    </div>
-  `).join('');
+  // Tables stay collapsed by default - a long list of full tables made this page unusable.
+  wrap.innerHTML = grammarTables.map(t=>{
+    const open = expandedGrammar.has(t.id);
+    const hasB = (t.rows||[]).some(r=>r.binyan);
+    return `
+    <div class="card gcard">
+      <button class="gcard-head as-button" onclick="toggleGrammarTable('${t.id}')">
+        <div style="flex:1;min-width:0;">
+          <div class="gcard-title">${escapeHtml(t.title)}</div>
+          <div class="gcard-sub">${(t.rows||[]).length} מילים${grammarMistakeCount(t.id) ? ` · ${grammarMistakeCount(t.id)} טעויות` : ''}</div>
+        </div>
+        <span class="gcard-arrow ${open?'open':''}">▾</span>
+      </button>
+      ${open ? `
+        <table class="gtable" style="margin-top:10px;"><thead><tr><th>מילה</th><th>שורש</th>${hasB?'<th>בניין</th>':''}<th>צורה/זמן</th><th>כינוי</th></tr></thead>
+        <tbody>${(t.rows||[]).map(r=>`<tr><td class="arabic">${escapeHtml(r.word)}</td><td class="arabic">${escapeHtml(r.root)}</td>${hasB?`<td>${escapeHtml(r.binyan||'')}</td>`:''}<td>${escapeHtml(r.form)}</td><td>${escapeHtml(r.pronoun)}</td></tr>`).join('')}</tbody></table>
+        <div class="btn-row" style="margin-top:10px;">
+          <button class="btn btn-teal" onclick="practiceGrammar('${t.id}')">תרגל טבלה זו</button>
+          <button class="btn btn-outline" onclick="renameGrammarTable('${t.id}')">✏️ שם</button>
+          <button class="btn btn-danger" onclick="deleteGrammar('${t.id}')">מחק</button>
+        </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function toggleGrammarTable(id){
+  if(expandedGrammar.has(id)) expandedGrammar.delete(id);
+  else expandedGrammar.add(id);
+  renderGrammarUI();
+}
+
+function renameGrammarTable(id){
+  const t = grammarTables.find(x=>x.id===id);
+  if(!t) return;
+  const name = prompt('שם חדש לטבלה:', t.title || '');
+  if(name === null) return;
+  const trimmed = name.trim();
+  if(!trimmed){ alert('השם לא יכול להיות ריק'); return; }
+  t.title = trimmed;
+  saveGrammar();
+  renderGrammarUI();
 }
 function deleteGrammar(id){
   if(!confirm('למחוק את הטבלה?')) return;
