@@ -392,18 +392,18 @@ nav.tabbar button.active{color:var(--gold); background:color-mix(in srgb, var(--
 /* Word list */
 .word-row{display:flex; align-items:center; justify-content:space-between; padding:12px 10px; border-bottom:1px solid var(--line);}
 .word-row:last-child{border-bottom:none;}
-.word-main .ar{font-size:23px; color:var(--ivory); line-height:1.4;}
+.word-main .ar{font-size:21px; color:var(--ivory); line-height:1.25;}
 .word-main .tr{font-size:11px; color:var(--teal); font-family:var(--font-mono);}
 .word-main .tr.tr-tap{color:var(--ivory-dim); cursor:pointer; filter:blur(3px); transition:filter .15s; display:inline-block;}
 .word-main .tr.tr-tap::before{content:'👆 '; font-size:9px; filter:none;}
 .word-main .tr.tr-tap.revealed{color:var(--teal); filter:blur(0);}
-.word-main .he{font-size:13px; color:var(--ivory-dim); margin-top:2px;}
-.word-tag{font-size:10px; padding:3px 8px; border-radius:20px; margin-inline-start:6px;}
+.word-main .he{font-size:12.5px; color:var(--ivory-dim); margin-top:1px;}
+.word-tag{font-size:10px; padding:3px 8px; border-radius:20px; margin-inline-start:6px; white-space:nowrap; display:inline-block;}
 .tag-review{background:color-mix(in srgb, var(--rose) 24%, var(--surface)); color:var(--rose);}
 .tag-known{background:color-mix(in srgb, var(--teal) 24%, var(--surface)); color:var(--teal);}
 .tag-new{background:color-mix(in srgb, var(--line) 70%, var(--surface)); color:var(--ivory-dim);}
-.word-actions{display:flex; gap:6px;}
-.icon-btn{background:none; border:none; color:var(--ivory-dim); font-size:16px; cursor:pointer; padding:4px 6px;}
+.word-actions{display:flex; gap:1px; flex:none;}
+.icon-btn{background:none; border:none; color:var(--ivory-dim); font-size:15px; cursor:pointer; padding:5px 4px; line-height:1;}
 
 /* Forms */
 input[type=text], textarea, select{
@@ -773,11 +773,15 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
 .duel-hero-done{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:12px 16px; margin-bottom:18px; text-align:center; font-size:12px; color:var(--ivory-dim);}
 
 /* Word list: categories, selection, bulk bar */
-.word-row{display:flex; align-items:center; gap:8px; padding:12px 6px; border-bottom:1px solid var(--line); transition:background .15s;}
+.word-row{display:flex; align-items:center; gap:6px; padding:9px 4px; border-bottom:1px solid var(--line); transition:background .15s;}
+/* tags live on their own line so they never wrap mid-word inside the big Arabic text */
+.word-tags{display:flex; flex-wrap:wrap; gap:4px; margin-top:5px;}
+.word-tags .word-tag,
+.word-tags .cat-badge{margin-inline-start:0; white-space:nowrap;}
 .word-row.selected{background:color-mix(in srgb, var(--gold) 14%, var(--surface));}
 .word-pick{font-size:15px; cursor:pointer; flex:none; opacity:.8;}
 .word-main{flex:1; min-width:0; cursor:pointer;}
-.cat-badge{display:inline-block; background:color-mix(in srgb, var(--teal) 20%, var(--surface)); color:var(--teal); font-size:10px; padding:2px 8px; border-radius:20px; margin-inline-start:4px;}
+.cat-badge{display:inline-block; background:color-mix(in srgb, var(--teal) 20%, var(--surface)); color:var(--teal); font-size:10px; padding:2px 8px; border-radius:20px; margin-inline-start:4px; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis;}
 .list-tools{display:flex; justify-content:space-between; align-items:center; font-size:11px; color:var(--ivory-dim); padding:4px 2px 8px;}
 .link-btn{background:none; border:none; color:var(--gold); font-family:var(--font-ui); font-size:12px; cursor:pointer; padding:2px 4px;}
 .bulk-bar{display:flex; align-items:center; justify-content:space-between; gap:8px; background:color-mix(in srgb, var(--gold) 14%, var(--surface)); border:1px solid var(--gold-dim); border-radius:12px; padding:10px 12px; margin-bottom:10px; flex-wrap:wrap;}
@@ -4180,9 +4184,14 @@ function renderWordList(){
       return `<div class="word-row ${sel?'selected':''} ${dupKind?'dup-'+dupKind:''}">
         <div class="word-pick" onclick="toggleWordSelect('${w.id}')">${sel?'✅':'⬜'}</div>
         <div class="word-main" onclick="toggleWordSelect('${w.id}')">
-          <div class="ar arabic">${escapeHtml(w.arabic)} <span class="word-tag tag-${st}">${statusLabel(st)}</span>${dupKind?` <span class="word-tag dup-tag dup-tag-${dupKind}" onclick="event.stopPropagation(); openDupReport('${w.id}')" title="הצג את כל הכפילויות">${DUP_LABEL[dupKind]} ⓘ</span>`:''}</div>
+          <div class="ar arabic">${escapeHtml(w.arabic)}</div>
           ${trHTML}
-          <div class="he">${escapeHtml(w.hebrew)}${w.category ? ` <span class="cat-badge">${escapeHtml(w.category)}</span>` : ''}</div>
+          <div class="he">${escapeHtml(w.hebrew)}</div>
+          <div class="word-tags">
+            <span class="word-tag tag-${st}">${statusLabel(st)}</span>
+            ${dupKind?`<span class="word-tag dup-tag dup-tag-${dupKind}" onclick="event.stopPropagation(); openDupReport('${w.id}')" title="הצג את כל הכפילויות">${DUP_LABEL[dupKind]} ⓘ</span>`:''}
+            ${w.category ? `<span class="cat-badge">${escapeHtml(w.category)}</span>` : ''}
+          </div>
         </div>
         <div class="word-actions">
           <button class="icon-btn" onclick="speakWord('${w.arabic.replace(/'/g,"\\'")}')" title="השמע">🔊</button>
