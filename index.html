@@ -1488,6 +1488,21 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
       <p id="speechNote" style="font-size:11px;color:var(--ivory-dim);margin-top:8px;"></p>
     </div>
     <div class="card">
+      <h3>🔔 תזכורת יומית</h3>
+      <div class="toggle-row">
+        <div>
+          <div class="t">הזכר לי לתרגל</div>
+          <div class="d">התראה יומית בשעה שתבחרו</div>
+        </div>
+        <div class="switch" id="reminderSwitch" onclick="toggleReminder()"></div>
+      </div>
+      <div id="reminderTimeRow" class="field hidden" style="margin-top:10px;">
+        <label>שעת התזכורת</label>
+        <input type="time" id="reminderTime" onchange="setReminderTime(this.value)">
+      </div>
+      <p id="reminderNote" style="font-size:11px;color:var(--ivory-dim);margin-top:8px;"></p>
+    </div>
+    <div class="card">
       <h3>📊 סיכום</h3>
       <div id="settingsStats"></div>
     </div>
@@ -2300,6 +2315,7 @@ async function pullFromCloud(){
       myGroups = (Array.isArray(d.groups) && d.groups.length) ? d.groups : [DEFAULT_GROUP];
       saveMyGroups();
       rebuildWords();
+scheduleReminder();
     } else {
       await pushToCloud(); // first sign-in on this account - seed the cloud with what's local
     }
@@ -8323,6 +8339,132 @@ function resetEverything(){
     : 'הכל נמחק.');
 }
 
+/* ---------- Daily practice reminder ---------- */
+// A local notification scheduled by the app itself - no server involved. It fires while
+// the app is running or recently backgrounded; iOS in particular may not wake a PWA that
+// has been closed for a long time, so this is a nudge, not a guarantee.
+let reminderTimer = null;
+
+function notificationsSupported(){
+  return typeof Notification !== 'undefined' && 'serviceWorker' in navigator;
+}
+
+// The app ships as a single file, so the worker is created from an inline blob rather
+// than a separate .js upload. It only needs to exist so showNotification() is available.
+async function ensureServiceWorker(){
+  if(!('serviceWorker' in navigator)) return null;
+  try{
+    const existing = await navigator.serviceWorker.getRegistration();
+    if(existing) return existing;
+    const src = "self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.matchAll({type:'window'}).then(c=>c.length?c[0].focus():clients.openWindow('./')));});";
+    const url = URL.createObjectURL(new Blob([src], {type:'text/javascript'}));
+    return await navigator.serviceWorker.register(url);
+  }catch(e){ return null; }
+}
+function isStandalone(){
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+         || window.navigator.standalone === true;
+}
+
+async function toggleReminder(){
+  if(progress.reminderOn){
+    progress.reminderOn = false;
+    saveProgress();
+    clearTimeout(reminderTimer);
+    renderReminderUI();
+    return;
+  }
+  if(!notificationsSupported()){
+    alert('הדפדפן הזה לא תומך בהתראות.');
+    return;
+  }
+  // iOS only allows notifications for an installed home-screen app
+  if(!isStandalone() && /iPhone|iPad|iPod/.test(navigator.userAgent)){
+    alert('באייפון צריך קודם להוסיף את האפליקציה למסך הבית (שיתוף ← הוסף למסך הבית), ואז להפעיל את התזכורת מתוך האפליקציה.');
+    return;
+  }
+  let perm = Notification.permission;
+  if(perm === 'default') perm = await Notification.requestPermission();
+  if(perm !== 'granted'){
+    alert('כדי לקבל תזכורות צריך לאשר התראות בהגדרות הדפדפן.');
+    return;
+  }
+  await ensureServiceWorker();
+  progress.reminderOn = true;
+  if(!progress.reminderTime) progress.reminderTime = '20:00';
+  saveProgress();
+  scheduleReminder();
+  renderReminderUI();
+}
+
+function setReminderTime(v){
+  if(!v) return;
+  progress.reminderTime = v;
+  saveProgress();
+  scheduleReminder();
+  renderReminderUI();
+}
+
+function scheduleReminder(){
+  clearTimeout(reminderTimer);
+  if(!progress.reminderOn || !notificationsSupported() || Notification.permission !== 'granted') return;
+
+  const [h, m] = (progress.reminderTime || '20:00').split(':').map(Number);
+  const now = new Date();
+  const next = new Date();
+  next.setHours(h, m, 0, 0);
+  if(next <= now) next.setDate(next.getDate() + 1);
+
+  reminderTimer = setTimeout(()=>{
+    fireReminder();
+    scheduleReminder(); // queue tomorrow's
+  }, next - now);
+}
+
+async function fireReminder(){
+  // don't nag on a day that's already done
+  if(studiedToday()) return;
+  const due = words.filter(isDue).length;
+  const body = due > 0
+    ? `${due} מילים מחכות לך. בוא נתרגל!`
+    : 'עוד לא תרגלת היום — כמה דקות ויש רצף!';
+  try{
+    const reg = await navigator.serviceWorker.getRegistration();
+    if(reg && reg.showNotification){
+      reg.showNotification('حان وقت التدريب 📚', { body, tag:'daily-reminder', dir:'rtl', lang:'he' });
+    } else {
+      new Notification('حان وقت التدريب 📚', { body, dir:'rtl', lang:'he' });
+    }
+  }catch(e){ /* notification refused or unavailable - nothing to do */ }
+}
+
+function studiedToday(){
+  const key = studyDayKey();
+  const rec = (progress.history || {})[key];
+  return !!(rec && (rec.c || rec.w));
+}
+
+function renderReminderUI(){
+  const sw = document.getElementById('reminderSwitch');
+  if(sw) sw.classList.toggle('on', !!progress.reminderOn);
+  const row = document.getElementById('reminderTimeRow');
+  if(row) row.classList.toggle('hidden', !progress.reminderOn);
+  const input = document.getElementById('reminderTime');
+  if(input) input.value = progress.reminderTime || '20:00';
+  const note = document.getElementById('reminderNote');
+  if(note){
+    if(!notificationsSupported()){
+      note.textContent = 'הדפדפן הזה לא תומך בהתראות.';
+    } else if(/iPhone|iPad|iPod/.test(navigator.userAgent) && !isStandalone()){
+      note.textContent = 'באייפון: הוסיפו את האפליקציה למסך הבית כדי לאפשר התראות.';
+    } else if(progress.reminderOn){
+      note.textContent = 'התזכורת פועלת כשהאפליקציה נפתחה לאחרונה. אם לא תיפתח כמה ימים, ייתכן שההתראה תתעכב.';
+    } else {
+      note.textContent = '';
+    }
+  }
+}
+
 function renderSettings(){
   const goalInput = document.getElementById('dailyGoalInput');
   if(goalInput){
@@ -8346,6 +8488,7 @@ function renderSettings(){
   if(pcSlot) pcSlot.innerHTML = catSelectHTML('printCat');
   const sw = document.getElementById('autoSpeakSwitch');
   if(sw) sw.classList.toggle('on', !!progress.autoSpeak);
+  renderReminderUI();
   renderThemePicker();
   const note = document.getElementById('speechNote');
   if(note){
