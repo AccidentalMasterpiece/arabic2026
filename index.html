@@ -2276,7 +2276,9 @@ async function pushToCloud(){
   if(!currentUser || !window.FB) return;
   try{
     await FB.setDoc(FB.doc(FB.db, 'users', currentUser.uid), {
-      words: myWords, grammarTables, texts, progress, rotation, srState,
+      words: myWords, grammarTables, texts, rotation, srState,
+      // strip the device-local reminder fields before syncing
+      progress: (function(){ const p = Object.assign({}, progress); delete p.reminderOn; delete p.reminderTime; return p; })(),
       hidden: [...hiddenIds],
       displayName: currentUser.displayName || '',
       email: currentUser.email || '',
@@ -2306,7 +2308,16 @@ async function pullFromCloud(){
       // cloud wins on first load after sign-in, so a fresh device gets your real data
       if(Array.isArray(d.words)) { myWords = d.words; saveWords(); }
       if(Array.isArray(d.grammarTables)) { grammarTables = d.grammarTables; saveGrammar(); }
-      if(d.progress) { progress = Object.assign(defaultProgress(), d.progress); saveProgress(); }
+      if(d.progress) {
+        // Reminder settings belong to THIS device (each phone has its own notification
+        // permission and schedule), so the cloud copy must not overwrite them - otherwise
+        // a stale sync silently resets the time the user just picked.
+        const localOnly = { reminderOn: progress.reminderOn, reminderTime: progress.reminderTime };
+        progress = Object.assign(defaultProgress(), d.progress);
+        if(localOnly.reminderOn !== undefined) progress.reminderOn = localOnly.reminderOn;
+        if(localOnly.reminderTime) progress.reminderTime = localOnly.reminderTime;
+        saveProgress();
+      }
       if(d.rotation) { rotation = d.rotation; saveRotation(); }
       if(Array.isArray(d.hidden)) { hiddenIds = new Set(d.hidden); localStorage.setItem(LS_HIDDEN, JSON.stringify(d.hidden)); }
       if(d.srState && typeof d.srState==='object') { srState = d.srState; localStorage.setItem(LS_SRSTATE, JSON.stringify(srState)); }
@@ -8431,9 +8442,9 @@ async function fireReminder(){
   try{
     const reg = await navigator.serviceWorker.getRegistration();
     if(reg && reg.showNotification){
-      reg.showNotification('حان وقت التدريب 📚', { body, tag:'daily-reminder', dir:'rtl', lang:'he' });
+      reg.showNotification('הגיע הזמן לתרגל! 📚', { body, tag:'daily-reminder', dir:'rtl', lang:'he' });
     } else {
-      new Notification('حان وقت التدريب 📚', { body, dir:'rtl', lang:'he' });
+      new Notification('הגיע הזמן לתרגל! 📚', { body, dir:'rtl', lang:'he' });
     }
   }catch(e){ /* notification refused or unavailable - nothing to do */ }
 }
