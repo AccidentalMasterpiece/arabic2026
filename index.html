@@ -979,6 +979,19 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
 .gcard-sub{font-size:11px; color:var(--ivory-dim); margin-top:3px;}
 .gcard-arrow{font-size:14px; color:var(--ivory-dim); flex:none; transition:transform .2s;}
 .gcard-arrow.open{transform:rotate(180deg); color:var(--gold);}
+/* weekly reminder schedule */
+.rem-days{display:flex; flex-direction:column; gap:6px;}
+.rem-day{display:flex; align-items:center; gap:8px;}
+.rem-day-toggle{display:flex; align-items:center; justify-content:space-between; gap:6px; width:62px; flex:none;
+  background:var(--well); border:1px solid var(--line); border-radius:9px; padding:8px 9px; cursor:pointer;}
+.rem-day.on .rem-day-toggle{background:color-mix(in srgb, var(--teal) 16%, var(--surface)); border-color:var(--teal);}
+.rem-day-name{font-size:12.5px; font-weight:700; color:var(--ivory-dim);}
+.rem-day.on .rem-day-name{color:var(--teal);}
+.rem-day-dot{font-size:11px; color:var(--teal); width:10px;}
+.rem-day-time{flex:1; background:var(--well); border:1px solid var(--line); color:var(--ivory);
+  border-radius:9px; padding:7px 9px; font-family:var(--font-ui); font-size:13px;}
+.rem-day-time:disabled{opacity:.35;}
+.rem-next{font-size:11.5px; color:var(--gold); margin-top:9px; text-align:center;}
 .more-card{position:relative; overflow:hidden; text-align:center; padding:18px 12px 14px;
   background:var(--surface); border:1px solid var(--line); border-radius:16px; cursor:pointer;
   min-height:132px; display:flex; flex-direction:column; align-items:center; justify-content:center;
@@ -1238,6 +1251,8 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
   import { getFirestore, doc, getDoc, setDoc, collection, getDocs, onSnapshot,
            addDoc, deleteDoc, updateDoc, query, where, orderBy, limit }
     from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+  import { getMessaging, getToken, onMessage, isSupported as msgSupported }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyDiNSqQ0LkxdLKC3tmFGFlM4SECxdaL3Go",
@@ -1256,6 +1271,10 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
     GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged,
     doc, getDoc, setDoc, collection, getDocs, onSnapshot,
     addDoc, deleteDoc, updateDoc, query, where, orderBy, limit,
+    // Cloud Messaging: only initialised where the browser actually supports it,
+    // otherwise getMessaging() throws and takes the whole module down with it.
+    getMessaging, getToken, onMessage, msgSupported, fbApp,
+    VAPID_KEY: "BJkgm_FtfGra_JxeHLrOkgVN4uaWv3m8fImSxWSTBdFhM2euyEoTmhwEUXo-RgeXKULxMWxxVUNkZAV-rLawVaY",
     ready: true
   };
   window.dispatchEvent(new Event('firebase-ready'));
@@ -1492,13 +1511,12 @@ label{font-size:12px; color:var(--ivory-dim); display:block; margin-bottom:4px;}
       <div class="toggle-row">
         <div>
           <div class="t">הזכר לי לתרגל</div>
-          <div class="d">התראה יומית בשעה שתבחרו</div>
+          <div class="d">בחרו ימים ושעה לכל יום</div>
         </div>
         <div class="switch" id="reminderSwitch" onclick="toggleReminder()"></div>
       </div>
-      <div id="reminderTimeRow" class="field hidden" style="margin-top:10px;">
-        <label>שעת התזכורת</label>
-        <input type="time" id="reminderTime" onchange="setReminderTime(this.value)">
+      <div id="reminderDaysRow" class="hidden" style="margin-top:12px;">
+        <div id="reminderDays"></div>
       </div>
       <p id="reminderNote" style="font-size:11px;color:var(--ivory-dim);margin-top:8px;"></p>
     </div>
@@ -2278,7 +2296,7 @@ async function pushToCloud(){
     await FB.setDoc(FB.doc(FB.db, 'users', currentUser.uid), {
       words: myWords, grammarTables, texts, rotation, srState,
       // strip the device-local reminder fields before syncing
-      progress: (function(){ const p = Object.assign({}, progress); delete p.reminderOn; delete p.reminderTime; return p; })(),
+      progress: (function(){ const p = Object.assign({}, progress); delete p.reminderOn; delete p.reminderTime; delete p.reminderDays; return p; })(),
       hidden: [...hiddenIds],
       displayName: currentUser.displayName || '',
       email: currentUser.email || '',
@@ -2312,10 +2330,11 @@ async function pullFromCloud(){
         // Reminder settings belong to THIS device (each phone has its own notification
         // permission and schedule), so the cloud copy must not overwrite them - otherwise
         // a stale sync silently resets the time the user just picked.
-        const localOnly = { reminderOn: progress.reminderOn, reminderTime: progress.reminderTime };
+        const localOnly = { reminderOn: progress.reminderOn, reminderTime: progress.reminderTime, reminderDays: progress.reminderDays };
         progress = Object.assign(defaultProgress(), d.progress);
         if(localOnly.reminderOn !== undefined) progress.reminderOn = localOnly.reminderOn;
         if(localOnly.reminderTime) progress.reminderTime = localOnly.reminderTime;
+        if(localOnly.reminderDays) progress.reminderDays = localOnly.reminderDays;
         saveProgress();
       }
       if(d.rotation) { rotation = d.rotation; saveRotation(); }
@@ -8356,21 +8375,94 @@ function resetEverything(){
 // has been closed for a long time, so this is a nudge, not a guarantee.
 let reminderTimer = null;
 
+// Per-day schedule: index 0 = Sunday .. 6 = Saturday. Each entry is {on, time}, so a
+// weekday can be off entirely or fire at a different hour from the rest of the week.
+const DAY_NAMES = ['א','ב','ג','ד','ה','ו','ש'];
+const DAY_FULL  = ['ראשון','שני','שלישי','רביעי','חמישי','שישי','שבת'];
+
+function defaultSchedule(){
+  return DAY_NAMES.map(()=>({ on:true, time:'20:00' }));
+}
+
+// Older versions stored one time for every day; carry it over so nobody loses their setting.
+function reminderSchedule(){
+  if(!Array.isArray(progress.reminderDays) || progress.reminderDays.length !== 7){
+    const legacy = progress.reminderTime || '20:00';
+    progress.reminderDays = DAY_NAMES.map(()=>({ on:true, time:legacy }));
+  }
+  return progress.reminderDays;
+}
+
 function notificationsSupported(){
   return typeof Notification !== 'undefined' && 'serviceWorker' in navigator;
 }
 
-// The app ships as a single file, so the worker is created from an inline blob rather
-// than a separate .js upload. It only needs to exist so showNotification() is available.
+// Cloud Messaging needs a real worker file at a real path - a blob URL will not do,
+// because the browser has to be able to wake it while the app is closed.
 async function ensureServiceWorker(){
   if(!('serviceWorker' in navigator)) return null;
   try{
-    const existing = await navigator.serviceWorker.getRegistration();
-    if(existing) return existing;
-    const src = "self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.matchAll({type:'window'}).then(c=>c.length?c[0].focus():clients.openWindow('./')));});";
-    const url = URL.createObjectURL(new Blob([src], {type:'text/javascript'}));
-    return await navigator.serviceWorker.register(url);
-  }catch(e){ return null; }
+    return await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+  }catch(e){
+    return null;
+  }
+}
+
+/* Registers this device with Firebase Cloud Messaging and stores its token, so a server
+   can reach it later even when the app is closed. Safe to call repeatedly - tokens can
+   rotate, and we just overwrite. */
+async function registerForPush(){
+  if(!window.FB || !currentUser) return null;
+  try{
+    if(FB.msgSupported && !(await FB.msgSupported())) return null;
+    const reg = await ensureServiceWorker();
+    if(!reg) return null;
+    const messaging = FB.getMessaging(FB.fbApp);
+    const token = await FB.getToken(messaging, {
+      vapidKey: FB.VAPID_KEY,
+      serviceWorkerRegistration: reg
+    });
+    if(!token) return null;
+
+    // keyed by token so one account can have several devices, each with its own schedule
+    await FB.setDoc(FB.doc(FB.db, 'users', currentUser.uid, 'devices', token), {
+      token,
+      schedule: reminderSchedule(),
+      enabled: !!progress.reminderOn,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+      updatedAt: Date.now()
+    });
+
+    // a notification arriving while the app is open doesn't show by itself
+    FB.onMessage(messaging, (payload)=>{
+      const n = (payload && payload.notification) || {};
+      if(reg.showNotification) reg.showNotification(n.title || 'הגיע הזמן לתרגל! 📚', { body: n.body || '', dir:'rtl', lang:'he' });
+    });
+
+    return token;
+  }catch(e){
+    return null;
+  }
+}
+
+// Whenever the schedule changes, push it up so the server knows when to send.
+async function syncPushSchedule(){
+  if(!window.FB || !currentUser) return;
+  try{
+    const reg = await navigator.serviceWorker.getRegistration();
+    if(!reg) return;
+    if(FB.msgSupported && !(await FB.msgSupported())) return;
+    const messaging = FB.getMessaging(FB.fbApp);
+    const token = await FB.getToken(messaging, { vapidKey: FB.VAPID_KEY, serviceWorkerRegistration: reg });
+    if(!token) return;
+    await FB.setDoc(FB.doc(FB.db, 'users', currentUser.uid, 'devices', token), {
+      token,
+      schedule: reminderSchedule(),
+      enabled: !!progress.reminderOn,
+      tz: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+      updatedAt: Date.now()
+    });
+  }catch(e){ /* offline or unsupported - the local timer still works */ }
 }
 function isStandalone(){
   return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
@@ -8383,6 +8475,7 @@ async function toggleReminder(){
     saveProgress();
     clearTimeout(reminderTimer);
     renderReminderUI();
+    syncPushSchedule(); // tell the server to stop sending to this device
     return;
   }
   if(!notificationsSupported()){
@@ -8402,34 +8495,72 @@ async function toggleReminder(){
   }
   await ensureServiceWorker();
   progress.reminderOn = true;
-  if(!progress.reminderTime) progress.reminderTime = '20:00';
+  reminderSchedule(); // seeds the week if this is the first time
   saveProgress();
   scheduleReminder();
   renderReminderUI();
+  registerForPush();
 }
 
-function setReminderTime(v){
+function setDayTime(idx, v){
   if(!v) return;
-  progress.reminderTime = v;
+  const sched = reminderSchedule();
+  sched[idx].time = v;
   saveProgress();
   scheduleReminder();
   renderReminderUI();
+  syncPushSchedule();
+}
+
+function toggleDay(idx){
+  const sched = reminderSchedule();
+  sched[idx].on = !sched[idx].on;
+  saveProgress();
+  scheduleReminder();
+  renderReminderUI();
+  syncPushSchedule();
+}
+
+// Apply one time to every enabled day - saves setting the same hour seven times.
+function applyTimeToAllDays(){
+  const sched = reminderSchedule();
+  const first = sched.find(d=>d.on) || sched[0];
+  const v = prompt('שעה אחידה לכל הימים הפעילים:', first.time || '20:00');
+  if(!v || !/^\d{1,2}:\d{2}$/.test(v)) return;
+  sched.forEach(d=>{ if(d.on) d.time = v; });
+  saveProgress();
+  scheduleReminder();
+  renderReminderUI();
+  syncPushSchedule();
+}
+
+// Walk forward from now until we hit the first enabled day whose time hasn't passed yet.
+function nextReminderAt(){
+  const sched = reminderSchedule();
+  if(!sched.some(d=>d.on)) return null;
+  const now = new Date();
+  for(let add=0; add<8; add++){
+    const d = new Date(now);
+    d.setDate(now.getDate() + add);
+    const slot = sched[d.getDay()];
+    if(!slot || !slot.on) continue;
+    const [h, m] = (slot.time || '20:00').split(':').map(Number);
+    d.setHours(h, m, 0, 0);
+    if(d > now) return d;
+  }
+  return null;
 }
 
 function scheduleReminder(){
   clearTimeout(reminderTimer);
   if(!progress.reminderOn || !notificationsSupported() || Notification.permission !== 'granted') return;
-
-  const [h, m] = (progress.reminderTime || '20:00').split(':').map(Number);
-  const now = new Date();
-  const next = new Date();
-  next.setHours(h, m, 0, 0);
-  if(next <= now) next.setDate(next.getDate() + 1);
-
+  const next = nextReminderAt();
+  if(!next) return;
+  // setTimeout caps out around 24.8 days; our horizon is a week, so a direct delay is fine
   reminderTimer = setTimeout(()=>{
     fireReminder();
-    scheduleReminder(); // queue tomorrow's
-  }, next - now);
+    scheduleReminder(); // queue the following one
+  }, next - new Date());
 }
 
 async function fireReminder(){
@@ -8458,10 +8589,35 @@ function studiedToday(){
 function renderReminderUI(){
   const sw = document.getElementById('reminderSwitch');
   if(sw) sw.classList.toggle('on', !!progress.reminderOn);
-  const row = document.getElementById('reminderTimeRow');
+  const row = document.getElementById('reminderDaysRow');
   if(row) row.classList.toggle('hidden', !progress.reminderOn);
-  const input = document.getElementById('reminderTime');
-  if(input) input.value = progress.reminderTime || '20:00';
+
+  const host = document.getElementById('reminderDays');
+  if(host && progress.reminderOn){
+    const sched = reminderSchedule();
+    host.innerHTML = `
+      <div class="rem-days">
+        ${sched.map((d,i)=>`
+          <div class="rem-day ${d.on?'on':''}">
+            <button class="rem-day-toggle as-button" onclick="toggleDay(${i})" title="${DAY_FULL[i]}">
+              <span class="rem-day-name">${DAY_NAMES[i]}</span>
+              <span class="rem-day-dot">${d.on?'✓':''}</span>
+            </button>
+            <input type="time" class="rem-day-time" value="${d.time||'20:00'}"
+                   ${d.on?'':'disabled'} onchange="setDayTime(${i}, this.value)">
+          </div>`).join('')}
+      </div>
+      <button class="btn btn-outline btn-block" style="margin-top:10px;font-size:12px;padding:8px;" onclick="applyTimeToAllDays()">
+        ⏰ החל שעה אחידה על כל הימים
+      </button>
+      <div class="rem-next" id="remNext"></div>`;
+    const nx = nextReminderAt();
+    const el = document.getElementById('remNext');
+    if(el) el.textContent = nx
+      ? `התזכורת הבאה: יום ${DAY_FULL[nx.getDay()]} בשעה ${String(nx.getHours()).padStart(2,'0')}:${String(nx.getMinutes()).padStart(2,'0')}`
+      : 'לא נבחרו ימים — לא תישלח תזכורת';
+  }
+
   const note = document.getElementById('reminderNote');
   if(note){
     if(!notificationsSupported()){
