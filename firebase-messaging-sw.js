@@ -16,11 +16,16 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Fired when a message arrives and the app is not in the foreground.
+/* Fired when a message arrives and the app is not in the foreground.
+   A payload that already carries a `notification` block is shown by the browser on its
+   own - handling it here as well produced two banners for one message. So we only render
+   data-only payloads, and always use the same tag so a repeat replaces the old banner. */
 messaging.onBackgroundMessage((payload) => {
-  const n = (payload && payload.notification) || {};
-  self.registration.showNotification(n.title || 'הגיע הזמן לתרגל! 📚', {
-    body: n.body || 'כמה דקות של תרגול ויש רצף!',
+  if (payload && payload.notification) return;
+  const d = (payload && payload.data) || {};
+  if (!d.title && !d.body) return;
+  self.registration.showNotification(d.title || 'הגיע הזמן לתרגל! 📚', {
+    body: d.body || 'כמה דקות של תרגול ויש רצף!',
     dir: 'rtl',
     lang: 'he',
     tag: 'daily-reminder'

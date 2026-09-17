@@ -8402,7 +8402,17 @@ function notificationsSupported(){
 async function ensureServiceWorker(){
   if(!('serviceWorker' in navigator)) return null;
   try{
-    return await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+    // An earlier build registered a throwaway blob worker. Registering the real file does
+    // not evict it, so a returning user stayed stuck on a worker that knows nothing about
+    // push - drop anything that isn't our messaging worker before registering.
+    const existing = await navigator.serviceWorker.getRegistrations();
+    for(const r of existing){
+      const url = (r.active && r.active.scriptURL) || (r.installing && r.installing.scriptURL) || '';
+      if(!url.includes('firebase-messaging-sw.js')) await r.unregister();
+    }
+    const reg = await navigator.serviceWorker.register('./firebase-messaging-sw.js');
+    await navigator.serviceWorker.ready;
+    return reg;
   }catch(e){
     return null;
   }
@@ -8433,10 +8443,18 @@ async function registerForPush(){
       updatedAt: Date.now()
     });
 
-    // a notification arriving while the app is open doesn't show by itself
+    // A payload that carries a `notification` block is displayed by the browser itself,
+    // so re-showing it here produced two identical banners. Only render the ones that
+    // arrive as pure data (which the browser ignores), and reuse the same tag so a repeat
+    // replaces the previous banner instead of stacking.
     FB.onMessage(messaging, (payload)=>{
-      const n = (payload && payload.notification) || {};
-      if(reg.showNotification) reg.showNotification(n.title || 'הגיע הזמן לתרגל! 📚', { body: n.body || '', dir:'rtl', lang:'he' });
+      if(payload && payload.notification) return;
+      const d = (payload && payload.data) || {};
+      if(!d.title && !d.body) return;
+      if(reg.showNotification){
+        reg.showNotification(d.title || 'הגיע הזמן לתרגל! 📚',
+          { body: d.body || '', tag:'daily-reminder', dir:'rtl', lang:'he' });
+      }
     });
 
     return token;
