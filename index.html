@@ -8526,8 +8526,20 @@ function setDayTime(idx, v){
   sched[idx].time = v;
   saveProgress();
   scheduleReminder();
-  renderReminderUI();
+  // Avoid a full renderReminderUI() here: that rebuilds every <input type="time">
+  // via innerHTML, which destroys the very field the user is still editing and
+  // closes its native picker mid-selection (hour picked, then the field vanishes
+  // before minutes can be set). Just refresh the "next reminder" line instead.
+  updateNextReminderText();
   syncPushSchedule();
+}
+
+function updateNextReminderText(){
+  const nx = nextReminderAt();
+  const el = document.getElementById('remNext');
+  if(el) el.textContent = nx
+    ? `התזכורת הבאה: יום ${DAY_FULL[nx.getDay()]} בשעה ${String(nx.getHours()).padStart(2,'0')}:${String(nx.getMinutes()).padStart(2,'0')}`
+    : 'לא נבחרו ימים — לא תישלח תזכורת';
 }
 
 function toggleDay(idx){
